@@ -1,8 +1,10 @@
-# 第一部分：从 Linux 进程到容器，再看到容器的边界
+# 一小时快速上手 Linux 容器
+
+从 Linux 进程出发，亲手组装一个容器，再看到容器的安全边界。
 
 ---
 
-# 第 0 章：Coding Agent 为什么必须运行在 sandbox 中
+## 1. Coding Agent 为什么必须运行在 sandbox 中
 
 以 Claude Code 为代表的 Coding Agent，在深刻改变世界和程序员工作方式的同时，也带来了一大类安全问题。具体来说，没有人能 100% 保证 Agent 写出来的代码不会删库跑路，不会下载病毒文件，也不会越权访问不该访问的文件。
 
@@ -10,7 +12,7 @@
 
 这个课程会从第一性原理出发，先讲为什么需要沙箱，再以完全实操、交互式的方式，深入浅出地介绍最有代表性的一类沙箱实现——Linux 容器。
 
-## 0.1 Coding Agent 执行的代码为什么不可信
+### 1.1 Coding Agent 执行的代码为什么不可信
 
 这里所说的“不可信”，并不等于代码一定是恶意的。更多时候，代码只是写错了，但错误代码和恶意代码可能造成完全相同的后果。
 
@@ -24,7 +26,7 @@
 
 Coding Agent 让这个问题变得更加突出，是因为“生成代码”和“执行代码”被放进了同一个自动循环。过去，错误代码可能要经过人工阅读、编译和运行才会产生影响；现在，Agent 可以在几秒钟内连续生成命令、安装依赖、运行测试，并根据结果继续采取下一步行动。因此，我们不能把安全建立在“Agent 应该不会写出危险代码”这个假设上。
 
-## 0.2 Sandbox 要回答的四个问题
+### 1.2 Sandbox 要回答的四个问题
 
 在一个完全自由的执行环境里，上面这些事故完全有可能发生。所谓沙箱，不是不让 Agent 生成这些代码，而是确保当 Agent 生成这些代码之后，它们要么无法按照 Agent 的意图执行，要么只能造成有限的危害。
 
@@ -39,7 +41,7 @@ Coding Agent 让这个问题变得更加突出，是因为“生成代码”和�
 
 ---
 
-# 第 1 章：准备一次性的 Linux 实验机
+## 2. 准备一次性的 Linux 实验机
 
 这门课程会以 Lima 作为实验环境。Lima 是一个可以在 macOS 上创建和管理轻量级 Linux 虚拟机的工具，它让我们能够在一台随时可以删除和重建的 Linux 机器中放心地进行实验。
 
@@ -53,7 +55,7 @@ Linux 容器则是一组具体的操作系统隔离机制，也是实现沙箱�
 
 我们会先从 Linux 容器讲起，因为它最适合用来理解隔离的基本原理。后面的课程还会继续介绍 gVisor、独立虚拟机等其他沙箱实现，并比较它们在隔离强度、兼容性和性能上的取舍。
 
-## 1.1 安装 Lima
+### 2.1 安装 Lima
 
 首先在 macOS 的终端中通过 Homebrew 安装 Lima：
 
@@ -109,7 +111,7 @@ cat /etc/os-release
 
 参考：[Lima `limactl start` 文档](https://lima-vm.io/docs/reference/limactl_start/)
 
-## 1.2 安装课程工具
+### 2.2 安装课程工具
 
 进入 Lima VM 后，安装后续实验需要的工具：
 
@@ -121,7 +123,7 @@ sudo apt update && sudo apt install -y util-linux procps iproute2 curl strace li
 
 如果你现在还不理解 namespace、系统调用、capabilities 或 `systemd-nspawn` 是什么，完全没有关系。这里仅仅是在一次性准备实验环境，后面我们会通过具体实验逐一解释这些概念和工具。
 
-## 1.3 确认没有挂载 macOS Home
+### 2.3 确认没有挂载 macOS Home
 
 ```bash
 mount | grep '/Users/' || echo "macOS home is not mounted"
@@ -133,17 +135,17 @@ mount | grep '/Users/' || echo "macOS home is not mounted"
 macOS home is not mounted
 ```
 
-这表示后续实验看到和修改的都是 VM 内部文件，不是 Mac 上的真实文件。从下一章开始，除非特别注明，所有命令都应该在 `sandbox-lab` 的 Linux shell 中执行。
+这表示后续实验看到和修改的都是 VM 内部文件，不是 Mac 上的真实文件。从下一节开始，除非特别注明，所有命令都应该在 `sandbox-lab` 的 Linux shell 中执行。
 
 后面大多数实验都会在命令完成后自动回到当前 shell，不需要每节手动执行 `exit`。只有当我们明确进入一个交互式容器 shell 时，才需要用 `exit` 返回 Lima VM。不要在其他位置习惯性地输入 `exit`，否则可能直接退出 Lima，让后续 Linux 命令误跑在 macOS 上。
 
 ---
 
-# 第 2 章：没有隔离的进程能做什么
+## 3. 没有隔离的进程能做什么
 
-本章所有命令都在 Lima VM 中运行。我们先不添加任何隔离措施，看看一个普通进程默认能够做什么。这会成为后续实验的比较基准。
+这一节的所有命令都在 Lima VM 中运行。我们先不添加任何隔离措施，看看一个普通进程默认能够做什么。这会成为后续实验的比较基准。
 
-## 2.1 删除文件
+### 3.1 删除文件
 
 先创建一个临时目录，并在其中放入一个名为 `important.txt` 的测试文件。随后，我们用一个新的 shell 模拟 Agent 启动的程序，让它删除目录中的文件：
 
@@ -161,13 +163,13 @@ ls -la /tmp/agent-work
 
 对操作系统来说，Agent 生成的代码就是普通进程。只要当前用户有权修改一个文件，它启动的程序通常也拥有相同的权限。
 
-## 2.2 读取“凭证”
+### 3.2 读取“凭证”
 
 ```bash
 echo 'FAKE_TOKEN=super-secret' >/tmp/fake-credentials && sh -c 'cat /tmp/fake-credentials'
 ```
 
-## 2.3 占用 CPU
+### 3.3 占用 CPU
 
 ```bash
 timeout 5 sh -c 'while :; do :; done' & sleep 1; top -b -n 1 -o %CPU | head -n 12; wait
@@ -175,7 +177,7 @@ timeout 5 sh -c 'while :; do :; done' & sleep 1; top -b -n 1 -o %CPU | head -n 1
 
 `while :` 是一个永远不会主动结束的循环。`timeout 5` 会在五秒后终止它，避免实验一直运行；中间的 `top` 会打印当前最消耗 CPU 的进程。预期可以看到运行循环的 `sh` 进程占用接近一个完整 CPU 核心，五秒后命令自动退出。
 
-## 2.4 创建大量进程
+### 3.4 创建大量进程
 
 除了 CPU 和内存，进程本身也是有限资源。下面的循环会一次启动 100 个后台 `sleep` 进程，用它们模拟一段程序在短时间内大量创建子进程：
 
@@ -187,7 +189,7 @@ sh -c 'for i in $(seq 1 100); do sleep 3 & done; echo "child processes: $(pgrep 
 
 这个例子有明确的进程数量和存活时间，不会像真正的 fork bomb 那样无限复制。但它已经足以说明：如果没有限制，一个普通程序可以快速创建大量进程，消耗 PID、内存和 CPU 调度资源。
 
-## 2.5 观察它仍然只是普通进程
+### 3.5 观察它仍然只是普通进程
 
 最后查看这个 shell 的进程身份，以及它当前所属的几个 namespace：
 
@@ -204,25 +206,25 @@ net   net:[4026531992]
 user  user:[4026531837]
 ```
 
-方括号里的数字可以看作 kernel 中这个 namespace 的标识。具体数字每台机器可能不同。再次运行同一条命令时，PID 会变化，但这些 namespace 标识通常保持不变，因为两个 shell 都处于 Lima VM 原来的 PID、mount、network 和 user namespace 中。下一章使用 `unshare` 创建新 namespace 后，其中一部分标识就会发生变化。
+方括号里的数字可以看作 kernel 中这个 namespace 的标识。具体数字每台机器可能不同。再次运行同一条命令时，PID 会变化，但这些 namespace 标识通常保持不变，因为两个 shell 都处于 Lima VM 原来的 PID、mount、network 和 user namespace 中。下一节使用 `unshare` 创建新 namespace 后，其中一部分标识就会发生变化。
 
 到这里可以看到，在加入任何隔离机制之前，不可信代码和开发者自己的命令处于同一个操作系统世界。它继承了当前用户的文件、进程和资源访问能力，而操作系统不会替我们判断它的意图。
 
 ---
 
-# 第 3 章：namespace——让进程看到不同的世界
+## 4. namespace——让进程看到不同的世界
 
 上一章中的程序之所以能够看到其他进程、访问相同的文件目录和使用同一套网络，是因为它和 Lima VM 中的其他程序共享同一个系统视图。Linux namespace 要解决的，正是“不同进程应该看到哪个世界”这个问题。
 
 namespace 会把某一类系统资源的视图划分开来。例如，PID namespace 可以让一组进程只看到自己的进程列表，Mount namespace 可以让它们拥有不同的文件系统挂载方式，Network namespace 则可以提供独立的网卡和路由。进程仍然由同一个 Linux kernel 调度，但它们从 kernel 得到的信息和能够操作的资源范围已经不同。
 
-Linux 提供了多种 namespace，本章不追求全部覆盖，而是选择几个最容易建立容器直觉的类型：我们先用 UTS namespace 做一个简单热身，然后依次观察 PID、Mount、User 和 Network namespace。
+Linux 提供了多种 namespace。这里不追求全部覆盖，而是选择几个最容易建立容器直觉的类型：我们先用 UTS namespace 做一个简单热身，然后依次观察 PID、Mount、User 和 Network namespace。
 
 实验中会反复使用 `unshare` 命令。它的作用很直接：为指定类型创建一个新的 namespace，然后在里面启动一条命令或一个 shell。`unshare` 本身不是另一种隔离机制，而是让我们能够直接操作和观察 namespace 的实验工具。
 
 还要提前注意，namespace 主要改变进程能够看到和操作的系统视图，却不负责限制它能消耗多少 CPU 或内存，也不负责过滤 syscall。后面的 cgroup、capabilities 和 seccomp 会继续补上这些边界。
 
-## 3.1 UTS namespace：最简单的热身
+### 4.1 UTS namespace：最简单的热身
 
 `hostname` 是一台机器在操作系统和网络中的名字。它会出现在终端提示符、日志和一些网络服务中，用来帮助人们区分不同的机器。我们先查看这台 Lima VM 当前的 hostname：
 
@@ -250,7 +252,7 @@ hostname
 
 它仍然是原来的 `sandbox-lab`。也就是说，同一个 Linux kernel 中的两个进程，可以分别认为自己处于不同名字的机器中。namespace 通常不会复制一整套操作系统，而是让不同进程看到不同的系统视图。UTS namespace 的功能相对简单，我们把它作为热身，接下来再看几个对容器更重要的 namespace。
 
-## 3.2 PID namespace：让进程以为自己是 PID 1
+### 4.2 PID namespace：让进程以为自己是 PID 1
 
 Linux 中运行的每个程序都是一个进程，每个进程都有一个编号，也就是 PID（Process ID）。`ps`、`top` 和 `kill` 等命令，都是通过 PID 来查看或操作进程的。在普通环境中，机器上的进程共享同一套 PID 编号，因此一个进程通常可以看到系统中的许多其他进程。
 
@@ -287,7 +289,7 @@ pgrep -a sleep
 - 它不会阻止 fork bomb；
 - namespace 中的 PID 1 还承担回收孤儿进程等特殊职责。
 
-## 3.3 Mount namespace：不同的文件系统视图
+### 4.3 Mount namespace：不同的文件系统视图
 
 Linux 把磁盘、临时文件系统和其他存储资源组织成一棵从 `/` 开始的目录树。所谓 mount，可以简单理解为把一个文件系统或目录“接到”这棵目录树中的某个位置。通常，一个进程执行的 mount 会改变整台机器的文件系统视图，其他进程也能看到这个变化。
 
@@ -328,7 +330,7 @@ total 0
 
 `inside-only` 消失了。它刚才被创建在新 namespace 中挂载的 tmpfs 里；命令结束后，我们回到了原来的 mount namespace。这里的 `/mnt/sandbox-demo` 仍然是原本那个空目录，从未挂载过刚才的 tmpfs。这说明 mount namespace 隔离的是进程看到的挂载关系：同一个路径，在两个 namespace 中可以指向不同的文件系统。
 
-### 反例：mount namespace 本身不会保护文件
+#### 反例：mount namespace 本身不会保护文件
 
 ```bash
 mkdir -p /tmp/shared-work && echo important >/tmp/shared-work/canary
@@ -346,7 +348,7 @@ ls /tmp/shared-work/canary
 
 文件仍然被删除。虽然 mount table 已经不同，但进程看到的目录仍然指向相同的底层文件。
 
-### 加入只读保护
+#### 加入只读保护
 
 上一个实验已经删除了 `canary`。先重新创建这个测试文件，并在里面写入一行 `important`：
 
@@ -393,7 +395,7 @@ echo still-writable >/tmp/shared-work/outside
 
 这个实验也说明，mount namespace 不只是决定进程能看到哪些挂载，还能让同一个目录在不同 namespace 中具有不同的挂载属性。只读挂载与普通文件权限会共同决定进程最终能否修改文件。
 
-## 3.4 User namespace：里面的 root 不等于外面的 root
+### 4.4 User namespace：里面的 root 不等于外面的 root
 
 Linux 使用 UID（User ID）和 GID（Group ID）识别用户与用户组，并据此判断一个进程能否读取文件、修改系统配置或执行特权操作。UID 0 通常就是 root，拥有普通用户没有的系统权限。
 
@@ -447,7 +449,7 @@ unshare --user --map-root-user sh -c 'id; cat /root/fake-secret'
 echo 1 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
 ```
 
-## 3.5 Network namespace：最容易证明的断网方式
+### 4.5 Network namespace：最容易证明的断网方式
 
 程序访问网络时，需要使用 Linux kernel 提供的网卡、IP 地址、路由表和端口。普通进程默认共享同一套网络环境，因此它不仅可能访问互联网，也可能访问 localhost、Lima VM 中的其他服务，以及 VM 能够到达的内网地址。
 
@@ -479,7 +481,7 @@ sudo unshare --net sh -c 'ip link set lo up; ip addr show lo'
 
 ---
 
-# 第 4 章：cgroup——限制进程能消耗多少资源
+## 5. cgroup——限制进程能消耗多少资源
 
 前面的 namespace 可以让不可信代码看不到外部进程、文件挂载和网络，但“看不到”不等于“用不到”。一个处于独立 PID namespace 中的程序，仍然可以创建大量真实进程；一个已经断网的程序，也仍然可以通过死循环占满 CPU，或者不断申请内存拖垮整台机器。
 
@@ -501,7 +503,7 @@ cgroup2fs
 
 直接操作这些文件很容易与系统自己的资源管理发生冲突，因此下面使用 `systemd-run` 创建临时的 cgroup。systemd 帮我们创建和清理分组，真正执行资源限制的仍然是 Linux kernel。
 
-## 4.1 CPU
+### 5.1 CPU
 
 CPU 限制控制的是一个进程组能够获得多少 CPU 执行时间，而不是降低虚拟 CPU 本身的频率。我们先运行一个纯计算任务，并用 `time` 测量它需要多久：
 
@@ -519,7 +521,7 @@ time sudo systemd-run --quiet --wait --pipe -p CPUQuota=20% python3 -c 'sum(i*i 
 
 命令中的 `--wait` 让 `systemd-run` 等待任务结束，`--pipe` 把程序输出接回当前终端，`-p` 则用于设置这个临时服务的资源属性。
 
-## 4.2 Memory
+### 5.2 Memory
 
 内存耗尽比 CPU 死循环更危险：CPU 忙时系统通常只是变慢，内存耗尽时 kernel 可能不得不杀死进程来回收空间。如果没有单独限制，不可信程序的内存压力会和系统中其他进程混在一起。
 
@@ -537,7 +539,7 @@ sudo systemd-run --wait --pipe -p MemoryMax=100M python3 -c 'x=bytearray(200*102
 
 `MemoryMax=100M` 是一个硬上限。Python 连同解释器自身使用的内存一旦超过限制，kernel 就会在这个 cgroup 内触发 OOM，并终止其中的进程。终端可能显示 `Killed`、`oom-kill` 或任务失败，但 Lima VM 和其他 shell 应该继续正常工作。这正是资源隔离想要达到的效果：允许单个任务失败，而不是让它拖垮整个环境。
 
-## 4.3 进程数量
+### 5.3 进程数量
 
 一个程序还可能通过不断创建进程或线程耗尽系统的 PID、内存和调度资源，这类攻击通常被称为 fork bomb。下面的例子不会无限复制自己，而是有控制地尝试启动 100 个短暂的 `sleep` 进程，同时把整个进程组允许存在的 task 数量限制为 20：
 
@@ -551,7 +553,7 @@ cgroup 的能力远不止这三个例子。它还可以控制进程之间竞争 
 
 ---
 
-# 第 5 章：Capabilities——root 权限可以被拆开
+## 6. Capabilities——root 权限可以被拆开
 
 cgroup 解决了“一个进程最多能消耗多少资源”，但它不决定进程有权执行哪些操作。一个严格限制了 CPU 和内存的进程，如果仍然拥有完整 root 权限，依然可能修改网络配置、挂载磁盘或改变其他文件的所有者。
 
@@ -593,11 +595,11 @@ sudo capsh --drop=cap_sys_chroot -- -c 'chroot / /bin/true'
 
 不需要记住完整列表，更重要的是掌握最小权限原则：先删除所有 capability，再只加回程序确实需要的少数能力。同时也要注意，capability 限制的是特权操作，并不会取消进程原本就拥有的普通文件权限。如果一个 Agent 本来就拥有工作目录的写权限，即使删除全部 capability，它仍然可以删除这个目录中的文件。
 
-即便把 root 特权拆得足够细，程序仍然能够调用大量普通系统调用。下一章的 seccomp 会继续从另一个方向缩小边界：限制一个进程可以进入哪些 kernel 接口。
+即便把 root 特权拆得足够细，程序仍然能够调用大量普通系统调用。下一节的 seccomp 会继续从另一个方向缩小边界：限制一个进程可以进入哪些 kernel 接口。
 
 ---
 
-# 第 6 章：seccomp——缩小能够调用的 kernel API
+## 7. seccomp——缩小能够调用的 kernel API
 
 上一章的 capabilities 把 root 特权拆成了更小的权限单元，但一个没有任何 capability 的普通进程，仍然可以打开文件、创建进程、连接网络和申请内存。这些操作最终都需要进入 kernel，而程序进入 kernel 的入口，就是系统调用，也叫 syscall。
 
@@ -639,17 +641,17 @@ seccomp 的底层规则最终会表示成 kernel 可以执行的 BPF filter，�
 
 ---
 
-# 第 7 章：systemd-nspawn——把这些零件组装起来
+## 8. systemd-nspawn——把这些零件组装起来
 
 到目前为止，我们一直在分别实验 Linux 的底层机制：namespace 改变进程看到的系统视图，cgroup 限制资源消耗，capabilities 拆分 root 特权，seccomp 则关闭不需要的 kernel 入口。但其中任何一种机制单独拿出来，都不能构成一个完整容器。
 
 容器并不是 kernel 中某个名为“container”的独立功能。它更像一份组装方案：创建进程时，同时为它准备新的 namespace、文件系统视图和用户身份，再把它放进受限的 cgroup，删除不需要的 capabilities，并安装 seccomp filter。只有这些机制组合在一起，我们才得到一个看起来像独立 Linux 系统的受限执行环境。
 
-这一章使用 `systemd-nspawn` 帮我们完成组装。它是 systemd 提供的轻量级容器工具，可以把一个 Linux root filesystem 作为容器启动，并通过命令行逐步加入只读文件系统、私有网络、capability 和 syscall 等限制。它没有隐藏太多底层细节，因此很适合用来观察前面学过的机制如何协同工作。
+这一节使用 `systemd-nspawn` 帮我们完成组装。它是 systemd 提供的轻量级容器工具，可以把一个 Linux root filesystem 作为容器启动，并通过命令行逐步加入只读文件系统、私有网络、capability 和 syscall 等限制。它没有隐藏太多底层细节，因此很适合用来观察前面学过的机制如何协同工作。
 
 `systemd-nspawn` 是这一轮组装实验的阶段性成果，但还不是整部分课程的终点。等我们真正得到一个容器后，还要反过来检查它的边界，看看这些机制没有隔离什么。
 
-## 7.1 一次性准备 rootfs
+### 8.1 一次性准备 rootfs
 
 容器首先需要一套自己的文件系统，也就是 root filesystem，通常简称 rootfs。它不是一个正在运行的虚拟机，也不包含 kernel；它只是一个普通目录，里面按照 Linux 的习惯放着 `/bin`、`/etc`、`/lib`、`/usr` 等文件。容器启动后，这个目录会成为容器进程眼中的 `/`。
 
@@ -675,7 +677,7 @@ sudo ls /var/lib/machines/agent-rootfs
 sudo mkdir -p /var/lib/machines/agent-rootfs/work
 ```
 
-## 7.2 启动最简单的容器
+### 8.2 启动最简单的容器
 
 现在让 `systemd-nspawn` 把刚才的目录当成一个独立系统的根目录，并在其中启动 Bash：
 
@@ -701,7 +703,7 @@ exit
 
 执行 `exit` 后会从 nspawn 容器返回 Lima VM，而不是返回 macOS。后面使用 `sh -c '...'` 的 nspawn 实验只执行一条命令，完成后会自动退出，不需要再次输入 `exit`。
 
-## 7.3 只读 rootfs
+### 8.3 只读 rootfs
 
 默认情况下，容器内的 root 用户可以修改 rootfs。如果不可信代码并不需要安装软件或改变系统文件，我们可以把整个 rootfs 设为只读，只另外开放真正需要写入的工作目录。
 
@@ -713,7 +715,7 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs --read-only sh -c 'touch 
 
 `-q` 只用于减少 nspawn 自己打印的提示信息。`touch` 应该得到 `Read-only file system`，随后命令自动退出。这个限制保护的是 rootfs；如果之后主动挂入一个可写目录，容器仍然可以修改那个目录中的内容。
 
-## 7.4 私有网络
+### 8.4 私有网络
 
 最简单可靠的网络策略通常是完全断网。`--private-network` 会让 nspawn 创建新的 network namespace，不再把 Lima VM 的网卡和路由直接交给容器。
 
@@ -725,7 +727,7 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs --private-network sh -c '
 
 预期只会看到表头，或者至少看不到通往外部网络的默认路由。容器因此无法直接访问互联网和 Lima VM 所能访问的内网。如果应用确实需要联网，后续可以再有选择地添加虚拟网卡、路由或受控代理，而不是默认继承全部网络能力。
 
-## 7.5 删除 capabilities
+### 8.5 删除 capabilities
 
 容器中的进程可以显示为 root，但通常没有必要保留 root 的全部特权。`--drop-capability=all` 会把所有 capability 从容器进程的 capability bounding set 中删除。
 
@@ -735,9 +737,9 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs --private-network sh -c '
 sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs --drop-capability=all sh -c 'chroot / /bin/true'
 ```
 
-预期会看到 `Operation not permitted`。这和第五章的实验是同一条原理，只是这次 capability 限制已经由容器 runtime 在启动时配置完成。
+预期会看到 `Operation not permitted`。这和前面的 capabilities 实验是同一条原理，只是这次 capability 限制已经由容器 runtime 在启动时配置完成。
 
-## 7.6 加入 seccomp
+### 8.6 加入 seccomp
 
 最后加入 seccomp。为了让结果容易观察，我们禁止 `uname` syscall，然后在容器中运行同名命令：
 
@@ -747,7 +749,7 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs --system-call-filter='~un
 
 `uname` 程序本身仍然存在，也能够正常启动，但当它向 kernel 请求系统信息时，seccomp 会拦截这个 syscall，因此命令应该返回 `Operation not permitted`。这个规则只是为了演示，实际策略应该根据容器中程序真正需要的 syscall 来设计。
 
-## 7.7 回顾 nspawn 做了什么
+### 8.7 回顾 nspawn 做了什么
 
 现在可以把几层限制放进同一次启动中：
 
@@ -764,27 +766,27 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs --read-only --private-net
 - 路由表中没有通向外部网络的默认路由；
 - `touch` 因 rootfs 只读而失败。
 
-前面每章出现的机制，现在同时作用在同一个进程上。它们彼此并不替代：network namespace 不会让文件系统变成只读，删除 capability 不会限制 CPU，而 seccomp 也不会自动隐藏宿主目录。容器的隔离能力来自这些限制的叠加。
+前面分别实验过的机制，现在同时作用在同一个进程上。它们彼此并不替代：network namespace 不会让文件系统变成只读，删除 capability 不会限制 CPU，而 seccomp 也不会自动隐藏宿主目录。容器的隔离能力来自这些限制的叠加。
 
 参考：[systemd-nspawn 文档](https://www.freedesktop.org/software/systemd/man/systemd.nspawn.html)
 
 到这里，我们已经不再是分别测试某个 namespace 或限制参数，而是得到了一套相对完整的隔离环境。容器 runtime 的主要工作，正是可靠地组合前面分别实验过的这些 kernel primitives。
 
-从底层隔离原理来看，Docker、Podman 等 Linux 容器工具，主要也是依赖 namespace、cgroup、capabilities、seccomp 和文件系统隔离。因此，可以把这一章看成是在“手搓一个基础版的 Docker 容器”。
+从底层隔离原理来看，Docker、Podman 等 Linux 容器工具，主要也是依赖 namespace、cgroup、capabilities、seccomp 和文件系统隔离。因此，可以把这一节看成是在“手搓一个基础版的 Docker 容器”。
 
 当然，我们手工拼出的容器与真实 Docker 还有很多差别。Docker 还会负责镜像构建与分层、registry 分发、虚拟网络、volume、daemon API、日志以及容器的创建、停止和清理等生命周期管理。但通过前面的实验，我们已经大致理解了 Linux 容器最核心的隔离原理，也知道了常见容器参数最终是在配置哪些底层机制。
 
-值得一提的是，Meta 最近推出的个人 Agent Muse，也在实际安全架构中使用了 `systemd-nspawn`。Muse 的核心 agent harness、工作区，以及 agent 代替用户执行的程序和工具，都运行在一个 nspawn runtime cell 中；真正的凭据、权限审批和网络出口控制等敏感服务则放在 cell 外。这个 runtime cell 还组合了独立 rootfs、User 和 Network namespace、受限 capabilities 与 syscall filter——也就是我们在这一章中刚刚逐层组装起来的这些机制。这说明 nspawn 不只是教学工具，同样可以成为真实 Agent 系统纵深防御的一层。[Meta 对 Muse 安全架构的介绍](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse)
+值得一提的是，Meta 最近推出的个人 Agent Muse，也在实际安全架构中使用了 `systemd-nspawn`。Muse 的核心 agent harness、工作区，以及 agent 代替用户执行的程序和工具，都运行在一个 nspawn runtime cell 中；真正的凭据、权限审批和网络出口控制等敏感服务则放在 cell 外。这个 runtime cell 还组合了独立 rootfs、User 和 Network namespace、受限 capabilities 与 syscall filter——也就是我们在这一节中刚刚逐层组装起来的这些机制。这说明 nspawn 不只是教学工具，同样可以成为真实 Agent 系统纵深防御的一层。[Meta 对 Muse 安全架构的介绍](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse)
 
 ---
 
-# 第 8 章：容器的根本边界——共享 kernel
+## 9. 容器的根本边界——共享 kernel
 
 到目前为止，我们已经让容器拥有不同的进程列表、文件系统视图、用户身份和网络环境，还限制了它能使用的资源、特权和 syscall。从容器内部看，它确实很像一台独立的 Linux 机器。
 
 但这个“像”有一个根本边界：容器没有自己的 kernel。容器中的进程仍然是 Lima VM 中的普通进程，它发起的 syscall 最终仍由 Lima VM 的 kernel 处理。namespace、capabilities 和 seccomp 也不是容器外面额外套上的另一层操作系统，它们本身就是由这个共享 kernel 实现和执行的。
 
-## 8.1 一眼看到共享 kernel
+### 9.1 一眼看到共享 kernel
 
 先在 Lima VM 中查看 kernel 版本：
 
@@ -802,7 +804,7 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs uname -r
 
 这也是容器轻量、启动快的主要原因之一：创建容器不需要重新启动一个完整操作系统，也不需要为每个容器运行一份 kernel。但从安全角度看，这也意味着 host kernel 成了所有容器共同依赖的一道边界。
 
-## 8.2 共享 kernel 会带来哪些风险
+### 9.2 共享 kernel 会带来哪些风险
 
 第一个风险是 kernel 漏洞可能变成 container escape。容器中的程序每次调用 `openat`、`socket`、`clone` 等 syscall，都会进入 host kernel。如果其中某个 syscall 或相关 kernel 子系统存在可利用漏洞，攻击者就可能从“只能控制容器中的进程”升级为“控制 host kernel 或宿主机”。这并不意味着任何 kernel 漏洞都一定能逃逸：攻击者还必须能够触达相应接口，并满足漏洞的具体条件。capability 和 seccomp 的重要价值之一，就是减少这些可触达的入口。但为了运行 Python、Node.js、编译器和构建工具，真实沙箱通常仍然需要开放相当多的 syscall，因此无法把风险完全消除。
 
@@ -812,23 +814,23 @@ sudo systemd-nspawn -qD /var/lib/machines/agent-rootfs uname -r
 
 最后，容器边界还依赖 runtime 正确完成组装。runtime 在启动容器时需要创建 namespace、处理 mount、打开文件描述符、设置用户身份并安装安全策略。即使单个 kernel 机制本身没有问题，runtime 在这些步骤中犯错，也可能意外把宿主资源带进容器。因此，host kernel 和容器 runtime 都属于这套安全边界中必须信任的部分。
 
-## 8.3 历史漏洞如何穿过这道边界
+### 9.3 历史漏洞如何穿过这道边界
 
 下面几个真实案例不需要记住漏洞编号，重点是观察：攻击者究竟利用了哪一层边界。
 
-### Dirty Pipe：read-only 最终仍由 kernel 执行
+#### Dirty Pipe：read-only 最终仍由 kernel 执行
 
 Dirty Pipe（CVE-2022-0847）是 Linux kernel 的 pipe 和 page cache 处理漏洞。正常情况下，进程不应该修改一个没有写权限或以只读方式挂载的文件；但这个漏洞可以在特定条件下直接修改 page cache 中的数据，绕过原本的文件权限和只读限制。
 
 这说明 read-only mount 和文件权限并不是物理屏障，它们是 kernel 执行的规则。如果负责执行规则的 kernel 本身出现漏洞，容器内看到的“只读”就可能不再可靠。对这类问题，修改容器配置通常不够，真正的修复是升级并重启 host kernel。[Ubuntu 对 Dirty Pipe 的说明](https://ubuntu.com/security/vulnerabilities/dirtypipe)
 
-### CVE-2022-0492：用于限制容器的 cgroup 也可能成为入口
+#### CVE-2022-0492：用于限制容器的 cgroup 也可能成为入口
 
 cgroup v1 曾提供一个名为 `release_agent` 的机制：当某个 cgroup 变空时，kernel 可以在用户空间执行一个清理程序。CVE-2022-0492 的问题在于，kernel 对设置这个程序路径的权限检查不够严格。在满足特定权限和配置条件时，容器中的攻击者可能诱导 host kernel 在容器外执行指定命令。
 
 我们前面把 cgroup 当作限制 CPU、内存和进程数量的安全工具；这个案例提醒我们，任何暴露给容器的复杂 kernel 接口也可能成为攻击面。安全机制可以降低一种风险，但它自己的实现仍然需要正确。[Ubuntu CVE-2022-0492 安全说明](https://ubuntu.com/security/CVE-2022-0492)
 
-### runc：组装容器时泄漏了一条通往 host 的路径
+#### runc：组装容器时泄漏了一条通往 host 的路径
 
 2019 年的 CVE-2019-5736 允许恶意容器借助 `/proc/self/exe` 覆盖 host 上的 runc binary。当管理员下一次使用 runc 操作容器时，被修改的 binary 会以 host root 身份执行。这里出问题的不是某个 namespace 概念，而是 runtime 在 host 与容器之间切换和执行进程时，没有安全处理这条特殊的文件引用。[CVE-2019-5736 漏洞记录](https://github.com/advisories/GHSA-gxmr-w5mj-v8hh)
 
@@ -836,7 +838,7 @@ cgroup v1 曾提供一个名为 `release_agent` 的机制：当某个 cgroup 变
 
 这两个案例共同说明，namespace 隔离的不只是“功能是否打开”，还依赖 runtime 在非常复杂的启动过程中不泄漏任何已经打开的 host 资源。容器 runtime 本身也必须及时更新，不能只更新容器镜像。
 
-## 8.4 容器仍然很有价值，但不是最强边界
+### 9.4 容器仍然很有价值，但不是最强边界
 
 共享 kernel 并不意味着容器没有安全价值。对于误删文件、普通依赖脚本、意外联网、CPU 死循环和内存耗尽等常见问题，正确配置的 namespace、cgroup、capabilities 和 seccomp 可以显著缩小影响范围。很多 Coding Agent 面对的首先也是这类“代码可能出错，但不一定专门研究 kernel 漏洞”的风险。
 
